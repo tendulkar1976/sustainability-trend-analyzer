@@ -2,6 +2,5 @@ streamlit
 pandas
 numpy
 plotly
-kaleido
-pdfplumber
-reportlab
+scikit-learn
+vaderSentiment
