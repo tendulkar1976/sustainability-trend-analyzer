@@ -1,9 +1,7 @@
 streamlit
 pandas
-matplotlib
-wordcloud
-nltk
-vaderSentiment
-scikit-learn
-seaborn
+numpy
+plotly
+kaleido
+pdfplumber
 reportlab
