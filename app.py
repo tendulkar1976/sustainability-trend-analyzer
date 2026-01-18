@@ -1,249 +1,109 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.express as px
-from datetime import datetime
+import openai
+import os
+from io import StringIO
 
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
+# Page config
+st.set_page_config(page_title="📊 Student Forms AI Analyzer", layout="wide")
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="AI Sustainability Assistant",
-    layout="wide",
-    page_icon="🌱"
-)
+# Sidebar for file upload and API key
+st.sidebar.title("⚙️ Setup")
+uploaded_file = st.sidebar.file_uploader("Upload CSV forms", type="csv")
+api_key = st.sidebar.text_input("OpenAI API Key", type="password", 
+                               help="Get free key from platform.openai.com")
 
-st.title("🌱 AI-Based Sustainability Intelligence Assistant")
-st.markdown(
-    "Analyze sustainability feedback using **AI, sentiment analysis, trend analytics, "
-    "and conversational intelligence**."
-)
+if api_key:
+    openai.api_key = api_key
 
-# ---------------- MONTHS ----------------
-months = [
-    "January","February","March","April","May","June",
-    "July","August","September","October","November","December"
-]
+# Main title
+st.title("🤖 Student Forms AI Analyzer")
+st.markdown("**Ask any question about your student forms data!**")
 
-# ---------------- SESSION STATE ----------------
-if "memory" not in st.session_state:
-    st.session_state.memory = {
-        "location": None,
-        "time": None,
-        "severity": None,
-        "specific_issue": None
-    }
-
-if "chat" not in st.session_state:
-    st.session_state.chat = []
-
-# ---------------- ML MODEL ----------------
-def train_resource_classifier():
-    train_data = [
-        ("power cut issue", "Electricity"),
-        ("voltage fluctuation", "Electricity"),
-        ("no water supply", "Water"),
-        ("water leakage", "Water"),
-        ("garbage not collected", "Waste"),
-        ("plastic waste problem", "Waste"),
-        ("air pollution", "Pollution"),
-        ("vehicle smoke", "Pollution"),
-        ("noise pollution", "Pollution")
-    ]
-    X, y = zip(*train_data)
-    model = Pipeline([
-        ("tfidf", TfidfVectorizer()),
-        ("clf", LogisticRegression(max_iter=300))
-    ])
-    model.fit(X, y)
-    return model
-
-ml_model = train_resource_classifier()
-
-def classify_with_confidence(text):
-    probs = ml_model.predict_proba([str(text)])[0]
-    classes = ml_model.classes_
-    idx = np.argmax(probs)
-    return classes[idx], round(probs[idx] * 100, 2)
-
-# ---------------- SENTIMENT ----------------
-analyzer = SentimentIntensityAnalyzer()
-
-def get_sentiment(text):
-    score = analyzer.polarity_scores(str(text))["compound"]
-    if score > 0.05:
-        return "Positive"
-    elif score < -0.05:
-        return "Negative"
-    else:
-        return "Neutral"
-
-# ---------------- CONTEXT DETECTION ----------------
-def detect_missing_context(text):
-    text = text.lower()
-    missing = []
-
-    if any(p in text for p in ["my area", "near me", "here", "local"]):
-        missing.append("location")
-    if len(text.split()) < 5:
-        missing.append("specific_issue")
-    if not any(p in text for p in ["daily", "frequent", "severe", "minor"]):
-        missing.append("severity")
-
-    return missing
-
-# ---------------- CSV UPLOAD ----------------
-uploaded_file = st.file_uploader(
-    "Upload Sustainability Feedback Dataset (CSV format) — required column: `feedback`",
-    type=["csv"]
-)
-
-if uploaded_file:
+# Load data
+if uploaded_file is not None and api_key:
     df = pd.read_csv(uploaded_file)
-
-    if "feedback" not in df.columns:
-        st.error("❌ The uploaded CSV must contain a `feedback` column.")
-        st.stop()
+    
+    # Data preview
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("📋 Data Preview")
+        st.dataframe(df.head(10), use_container_width=True)
+    
+    with col2:
+        st.subheader("📈 Quick Stats")
+        st.metric("Total Forms", len(df))
+        st.metric("Avg Satisfaction", f"{df.get('satisfaction', pd.Series([0])).mean():.1f}/10")
+        st.metric("Departments", df.get('department', pd.Series(['N/A'])).nunique())
+    
+    # Chat interface
+    st.subheader("💬 Ask Questions About Your Data")
+    
+    # Initialize chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    # Display chat history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    # Chat input
+    if prompt := st.chat_input("Ask about trends, satisfaction, departments, feedback..."):
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Prepare data for AI
+        sample_data = df.sample(min(20, len(df))).to_csv(index=False)
+        stats_summary = {
+            'rows': len(df),
+            'avg_satisfaction': df.get('satisfaction', pd.Series([0])).mean(),
+            'departments': df.get('department', pd.Series(['N/A'])).value_counts().to_dict()
+        }
+        
+        # AI Prompt
+        full_prompt = f"""
+        You are analyzing student/office worker forms data. 
+        
+        SAMPLE DATA (first 20 rows):
+        {sample_data}
+        
+        STATS SUMMARY: {stats_summary}
+        
+        Question: "{prompt}"
+        
+        Answer concisely with specific insights from the data. Use bullet points.
+        """
+        
+        with st.chat_message("assistant"):
+            with st.spinner("AI is analyzing your data..."):
+                try:
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": full_prompt}],
+                        max_tokens=400,
+                        temperature=0.2
+                    )
+                    ai_response = response.choices[0].message.content
+                    
+                    st.markdown(ai_response)
+                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                    
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+            
 else:
-    df = pd.DataFrame(columns=["feedback"])
+    st.info("👈 Upload your CSV file and enter OpenAI API key in the sidebar to start!")
+    st.markdown("""
+    ## Example Questions to Ask:
+    - "What are the main feedback themes?"
+    - "Which department has lowest satisfaction?"
+    - "Show trends by attendance"
+    - "Recommendations to improve scores?"
+    """)
 
-# ---------------- PROCESS DATASET ----------------
-if not df.empty:
-    df["Resource"], df["Confidence"] = zip(
-        *df["feedback"].apply(classify_with_confidence)
-    )
-    df["Sentiment"] = df["feedback"].apply(get_sentiment)
-    df["Month"] = np.random.choice(months, size=len(df))
-    df["Location"] = np.random.choice(
-        ["Bengaluru", "Whitefield", "Indiranagar", "Chennai", "Hyderabad"],
-        size=len(df)
-    )
-
-# =================================================
-# ✅ DATASET-LEVEL ANALYTICS (ALWAYS SHOWN)
-# =================================================
-if not df.empty:
-
-    st.markdown("## 📊 Dataset Overview")
-
-    # -------- Resource Distribution --------
-    res_counts = df["Resource"].value_counts().reset_index()
-    res_counts.columns = ["Resource", "Count"]
-
-    fig_res = px.pie(
-        res_counts,
-        names="Resource",
-        values="Count",
-        hole=0.4,
-        title="Resource-wise Issue Distribution"
-    )
-    st.plotly_chart(fig_res, use_container_width=True)
-
-    # -------- Sentiment Distribution --------
-    sent_counts = df["Sentiment"].value_counts().reset_index()
-    sent_counts.columns = ["Sentiment", "Count"]
-
-    fig_sent = px.bar(
-        sent_counts,
-        x="Sentiment",
-        y="Count",
-        color="Sentiment",
-        title="Overall Sentiment Distribution"
-    )
-    st.plotly_chart(fig_sent, use_container_width=True)
-
-    # -------- Trend Over Time --------
-    trend_df = (
-        df.groupby(["Month", "Resource"])
-        .size()
-        .reset_index(name="Count")
-    )
-
-    fig_trend = px.area(
-        trend_df,
-        x="Month",
-        y="Count",
-        color="Resource",
-        category_orders={"Month": months},
-        title="Feedback Trend Over Time"
-    )
-    st.plotly_chart(fig_trend, use_container_width=True)
-
-# =================================================
-# 💬 CHAT-BASED AI ASSISTANT (OPTIONAL)
-# =================================================
+# Footer
 st.markdown("---")
-st.subheader("💬 Sustainability AI Assistant")
-
-user_input = st.chat_input("Describe your sustainability concern...")
-
-def ai_reply(text):
-    missing = detect_missing_context(text)
-
-    if "location" in missing and not st.session_state.memory["location"]:
-        return "📍 Please share your **location (city or locality)**."
-    if "severity" in missing and not st.session_state.memory["severity"]:
-        return "⚖️ How severe is the issue? (Low / Medium / High)"
-
-    return "✅ Thank you. I will analyze this issue."
-
-if user_input:
-    st.session_state.chat.append(("user", user_input))
-    st.session_state.chat.append(("assistant", ai_reply(user_input)))
-
-for role, msg in st.session_state.chat:
-    with st.chat_message(role):
-        st.write(msg)
-
-# ---------------- MEMORY UPDATE ----------------
-for role, msg in st.session_state.chat[::-1]:
-    if role == "user":
-        if st.session_state.memory["location"] is None and any(
-            city.lower() in msg.lower()
-            for city in ["bengaluru", "chennai", "hyderabad"]
-        ):
-            st.session_state.memory["location"] = msg
-
-        if st.session_state.memory["severity"] is None and msg.lower() in ["low","medium","high"]:
-            st.session_state.memory["severity"] = {"low":1,"medium":2,"high":3}[msg.lower()]
-
-# ---------------- FINAL CHAT ANALYSIS ----------------
-if user_input and st.session_state.memory["severity"]:
-
-    predicted_resource, confidence = classify_with_confidence(user_input)
-    sentiment = get_sentiment(user_input)
-
-    st.markdown("### 🤖 Chat-Based Analysis")
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Resource", predicted_resource)
-    c2.metric("Confidence", f"{confidence}%")
-    c3.metric("Sentiment", sentiment)
-
-    # ---- Last Month vs Now ----
-    current_month = months[datetime.now().month - 1]
-    last_month = months[datetime.now().month - 2]
-
-    lm = len(df[(df["Month"] == last_month) & (df["Resource"] == predicted_resource)])
-    cm = len(df[(df["Month"] == current_month) & (df["Resource"] == predicted_resource)])
-
-    cmp_df = pd.DataFrame({
-        "Period": [last_month, current_month],
-        "Feedback Count": [lm, cm]
-    })
-
-    fig_cmp = px.bar(
-        cmp_df,
-        x="Period",
-        y="Feedback Count",
-        text="Feedback Count",
-        title=f"{predicted_resource}: Last Month vs Current Month"
-    )
-    st.plotly_chart(fig_cmp, use_container_width=True)
-
-# ---------------- DATA PREVIEW ----------------
-with st.expander("📄 View Processed Dataset"):
-    st.dataframe(df)
+st.markdown("*Built with Streamlit + OpenAI GPT | Lightweight prototype*")
