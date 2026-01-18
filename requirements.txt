@@ -1,6 +1,3 @@
-streamlit
-pandas
-numpy
-plotly
-scikit-learn
-vaderSentiment
+streamlit==1.36.0
+pandas==2.2.2
+openai==1.40.0
