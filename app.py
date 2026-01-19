@@ -187,4 +187,4 @@ else:
     """)
 
 st.markdown("---")
-st.markdown("*🚀 100% FREE • No APIs • Works with ALL CSV forms*")
+st.markdown("")
