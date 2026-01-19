@@ -1,165 +1,190 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from io import StringIO
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="📊 Universal Forms AI Analyzer",
-    layout="wide"
-)
+# Page config
+st.set_page_config(page_title="📊 Universal Forms AI Analyzer", layout="wide")
 
-st.title("🎛️ Universal Forms AI Analyzer")
-st.markdown(
-    "**Employee feedback • Customer surveys • Student forms • Sales data • ANY CSV!**"
-)
-
-# ---------------- AI ANALYSIS FUNCTION ----------------
 def universal_analyze(df, prompt):
-    """
-    This function represents the core 'Rule-Based AI' of the system.
-    It interprets natural language prompts and dynamically analyzes any CSV.
-    """
+    """Smart analysis for ANY CSV form data"""
     prompt_lower = prompt.lower()
-
+    
     # Auto-detect columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    text_cols = df.select_dtypes(include=["object"]).columns.tolist()
-
+    text_cols = df.select_dtypes(include=['object']).columns.tolist()
+    
+    # Smart column detection
     score_col = None
     group_col = None
-
+    feedback_col = None
+    
     for col in numeric_cols:
-        if any(x in col.lower() for x in ["score", "rate", "rating", "mark", "grade", "satisf"]):
+        if any(x in col.lower() for x in ['score', 'rate', 'satisf', 'rating', 'mark', 'grade']):
             score_col = col
             break
-    if score_col is None and numeric_cols:
-        score_col = numeric_cols[0]
-
+    else:
+        score_col = numeric_cols[0] if numeric_cols else None
+    
     for col in text_cols:
-        if any(x in col.lower() for x in ["group", "dept", "team", "class", "division", "department"]):
+        if any(x in col.lower() for x in ['group', 'dept', 'team', 'class', 'division', 'department']):
             group_col = col
             break
+    
+    for col in text_cols:
+        if any(x in col.lower() for x in ['feedback', 'comment', 'remark', 'note', 'review']):
+            feedback_col = col
+            break
+    
+    # RESPONSE LOGIC
+    if 'depart' in prompt_lower or 'group' in prompt_lower or 'team' in prompt_lower:
+        if group_col and group_col in df.columns and score_col:
+            group_stats = df.groupby(group_col)[score_col].agg(['mean', 'count']).round(1)
+            group_stats.columns = ['Avg Score', 'Count']
+            return f"""
+**🏢 GROUPS/DEPARTMENTS ANALYSIS:**
+{group_stats.to_string()}
+• **Total Groups**: {df[group_col].nunique()}
+• **Overall Avg**: {df[score_col].mean():.1f}"""
+        else:
+            return f"**📋 COLUMNS**: {', '.join(df.columns.tolist())}"
+    
+    elif 'low' in prompt_lower or 'worst' in prompt_lower:
+        if score_col and group_col and group_col in df.columns:
+            lowest_group = df.groupby(group_col)[score_col].mean().idxmin()
+            lowest_score = df.groupby(group_col)[score_col].mean().min()
+            return f"""
+**📉 LOWEST PERFORMING:**
+• **{lowest_group}**: {lowest_score:.1f} ({df[df[group_col]==lowest_group][score_col].count()} responses)
+• **Overall Avg**: {df[score_col].mean():.1f}"""
+        else:
+            return f"**📉 LOWEST SCORE**: {df[numeric_cols[0]].min():.1f}"
+    
+    elif 'high' in prompt_lower or 'best' in prompt_lower:
+        if score_col and group_col and group_col in df.columns:
+            highest_group = df.groupby(group_col)[score_col].mean().idxmax()
+            highest_score = df.groupby(group_col)[score_col].mean().max()
+            return f"""
+**📈 HIGHEST PERFORMING:**
+• **{highest_group}**: {highest_score:.1f} ({df[df[group_col]==highest_group][score_col].count()} responses)
+• **Overall Avg**: {df[score_col].mean():.1f}"""
+        else:
+            return f"**📈 HIGHEST SCORE**: {df[numeric_cols[0]].max():.1f}"
+    
+    elif 'report' in prompt_lower or 'analyze' in prompt_lower or 'summary' in prompt_lower:
+        summary = f"""
+**📊 COMPLETE DATA REPORT** ({len(df)} records)
 
-    # ---------------- RESPONSE LOGIC ----------------
-    if "group" in prompt_lower or "department" in prompt_lower:
-        if score_col and group_col:
-            stats = df.groupby(group_col)[score_col].agg(["mean", "count"]).round(2)
-            return f"### 🏢 Group Analysis\n{stats.to_string()}"
-        return "Group or score column not detected."
-
-    elif "lowest" in prompt_lower or "worst" in prompt_lower:
-        if score_col and group_col:
-            g = df.groupby(group_col)[score_col].mean()
-            return f"### 📉 Lowest Performing\n**{g.idxmin()}** → {g.min():.2f}"
-        return "Insufficient data for lowest analysis."
-
-    elif "highest" in prompt_lower or "best" in prompt_lower:
-        if score_col and group_col:
-            g = df.groupby(group_col)[score_col].mean()
-            return f"### 📈 Best Performing\n**{g.idxmax()}** → {g.max():.2f}"
-        return "Insufficient data for highest analysis."
-
-    elif "trend" in prompt_lower or "correlation" in prompt_lower:
+**📋 COLUMNS DETECTED** ({len(df.columns)} total):
+"""
+        if numeric_cols:
+            summary += f"• **Numeric** ({len(numeric_cols)}): {', '.join(numeric_cols[:3])}{'...' if len(numeric_cols)>3 else ''}\n"
+        if text_cols:
+            summary += f"• **Text** ({len(text_cols)}): {', '.join(text_cols[:3])}{'...' if len(text_cols)>3 else ''}\n"
+        
+        if numeric_cols:
+            summary += f"\n**🔢 KEY METRICS** (Top 3 numeric columns):\n"
+            for col in numeric_cols[:3]:
+                summary += f"• **{col}**: Avg={df[col].mean():.1f}, Min={df[col].min():.0f}, Max={df[col].max():.0f}\n"
+        
+        if group_col:
+            summary += f"\n**🏢 GROUPS FOUND**: {df[group_col].nunique()} ({', '.join(df[group_col].unique()[:3])}{'...' if len(df[group_col].unique())>3 else ''})"
+        
+        return summary
+    
+    elif 'trend' in prompt_lower or 'pattern' in prompt_lower or 'correlat' in prompt_lower:
         if len(numeric_cols) >= 2:
-            return "### 📈 Correlation Matrix\n" + df[numeric_cols].corr().round(2).to_string()
-        return "Not enough numeric columns for trend analysis."
-
-    elif "report" in prompt_lower or "summary" in prompt_lower:
-        return f"""
-### 📊 Complete Report
-• Records: {len(df)}
-• Columns: {len(df.columns)}
-• Numeric Columns: {numeric_cols if numeric_cols else "None"}
-• Text Columns: {text_cols if text_cols else "None"}
-"""
-
+            correlations = df[numeric_cols[:3]].corr()
+            strong_corr = correlations.abs().stack().drop_duplicates().nlargest(3).round(2)
+            return f"""
+**📈 TRENDS & CORRELATIONS:**
+• **Strongest**: {strong_corr.index[0][0]} ↔ {strong_corr.index[0][1]} (r={strong_corr.iloc[0]:.2f})
+• **Records analyzed**: {len(df)}
+• **Columns**: {len(numeric_cols)} numeric"""
+        else:
+            return f"**📈 TRENDS**: {len(df)} records, {len(numeric_cols)} numeric columns"
+    
     else:
-        return """
-### 🤖 Smart AI Suggestions
-Try asking:
-- full report
-- lowest performing group
-- best performing department
-- show trends
+        return f"""
+**🔍 INSTANT INSIGHTS** ({len(df)} records)
+
+**📊 DATA STRUCTURE:**
+• **Total Columns**: {len(df.columns)}
+• **Numeric Fields**: {len(numeric_cols)} 
+• **Text Fields**: {len(text_cols)}
+
+**💡 ASK ABOUT:**
+• "departments" "groups" "teams"
+• "lowest scores" "worst performing" 
+• "highest scores" "best performing"
+• "full report" "analyze all"
+• "trends" "correlations"
 """
 
-# ---------------- SIDEBAR ----------------
-st.sidebar.title("📁 Upload CSV")
-uploaded_file = st.sidebar.file_uploader(
-    "Employee / Student / Customer CSV",
-    type=["csv"]
-)
+# Sidebar
+st.sidebar.title("📁 Upload ANY Form CSV")
+uploaded_file = st.sidebar.file_uploader("Employee, Customer, Student, Sales...", type="csv")
 
-# ---------------- MAIN APP ----------------
+# Main title
+st.title("🎛️ Universal Forms Analyzer")
+st.markdown("**Employee feedback • Customer surveys • Student forms • Sales data • ANY CSV!**")
+
+# Load data
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
-    st.success("✅ CSV loaded successfully")
-
+    df = pd.read_csv(uploaded_file)  # ✅ FIXED: was 'uploadlined_file'
+    
+    # Data preview
     col1, col2 = st.columns(2)
-
     with col1:
         st.subheader("📋 Data Preview")
         st.dataframe(df.head(10), use_container_width=True)
-
+    
     with col2:
-        st.subheader("📈 Auto Stats")
+        st.subheader("📈 Auto-Detected Stats")
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         st.metric("Records", len(df))
+        if len(numeric_cols) > 0:
+            st.metric("Avg Score", f"{df[numeric_cols[0]].mean():.1f}")
         st.metric("Columns", len(df.columns))
-        st.metric("Avg Score", f"{df[numeric_cols[0]].mean():.2f}" if len(numeric_cols) > 0 else "N/A")
-
-    st.markdown("---")
-    st.subheader("💬 Ask the AI about your data")
-
-    prompt = st.text_input("Example: full report, lowest performing, trends")
-
-    if prompt:
-        with st.spinner("🤖 AI is analyzing..."):
-            response = universal_analyze(df, prompt)
-            st.markdown(response)
-
+    
+    # Chat interface
+    st.subheader("💬 Ask About Your Data")
+    
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    
+    if prompt := st.chat_input("departments? lowest scores? full report? trends?..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        with st.chat_message("assistant"):
+            with st.spinner("🔍 Smart Analysis..."):
+                response = universal_analyze(df, prompt)
+                st.markdown(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
+            
 else:
-    st.info("👈 Upload a CSV file to begin")
+    st.info("👈 **UPLOAD ANY CSV → INSTANT SMART ANALYSIS!**")
+    st.markdown("""
+    **✅ Works Instantly With:**
+    • Employee satisfaction surveys
+    • Customer feedback forms  
+    • Student evaluation forms
+    • Sales performance reports
+    • **ANY CSV with numbers/text**
+    
+    **💬 Smart Questions:**
+    • "show departments" 
+    • "lowest performing group"
+    • "highest scores"
+    • "complete report"
+    • "find trends"
+    """)
 
-# ---------------- AI EXPLANATION SECTION ----------------
 st.markdown("---")
-st.subheader("🤖 Where AI Is Used in This Project")
-
-st.markdown("""
-### ❌ No External AI APIs or LLMs Used
-
-This project uses **Rule-Based Artificial Intelligence**, implemented using Python and Pandas.
-
-### ✅ AI Techniques Implemented
-- **Natural Language Keyword Matching** – Interprets user queries like *“lowest”, “report”, “departments”*
-- **Auto Column Detection** – Automatically finds score and group columns
-- **Dynamic Group Analysis** – Performs real-time aggregation and comparisons
-- **Smart Fallback Logic** – Works with ANY CSV structure
-
-### 🎯 Why This Still Qualifies as AI
-- Mimics human decision-making logic
-- Adapts to unknown data schemas
-- Produces intelligent, context-aware insights
-- Requires no manual configuration
-""")
-
-# ---------------- SDG SECTION ----------------
-st.markdown("---")
-st.subheader("🌍 UN Sustainable Development Goal Alignment")
-
-st.markdown("""
-### 🎯 SDG 9: Industry, Innovation & Infrastructure
-
-**Why this project supports SDG 9:**
-- ✅ Democratizes data analysis (no coding required)
-- ✅ Enables digital decision-making tools
-- ✅ Promotes innovation using lightweight AI
-- ✅ Works in low-resource environments
-- ✅ Supports evidence-based organizational improvements
-
-**Specific SDG Targets Addressed:**
-- **9.5** – Enhance research and technological capability
-- **9.C** – Increase access to digital technologies
-""")
-
-st.caption("🚀 100% Free • No APIs • Pure Python • Rule-Based AI")
+st.markdown("*🚀 100% FREE • No APIs • Works with ALL CSV forms*")
